@@ -1,12 +1,12 @@
 from typing import List
 import os
-import airflow
+#import airflow
 from airflow.decorators import dag, task
 import requests
-import time
+#import time
 from datetime import datetime, timedelta
 from operator import itemgetter
-import csv
+#import csv
 import json
 import pendulum
 import pandas as pd
@@ -17,100 +17,85 @@ import json
 
 ##-- Global vars
 
-global URL, data_dir, page_size
-URL = 'https://sa-mp.im/api/v1/players/get'
-data_dir = './dags/ProjektDataService/data'
-page_size = 1000
 default_task_args = {
     'retries' : 10,
     'retry_delay' : timedelta(minutes=1),
     'retry_exponential_backoff' : True,
 }
 
-##-- Methods
+##-- Methodsx       
 
-@task
-def extract_PlayerProdex(**kwargs):    
-    params = {}
-    ts = datetime.fromisoformat(kwargs['ts'])
-    params['start'] = (ts - timedelta(minutes=9)).replace(tzinfo=None).isoformat(timespec='minutes')
-    params['end']   = ts.replace(tzinfo=None).isoformat(timespec='minutes')
+def setups():
+    global URL, PATH
+    URL = 'https://sa-mp.im/api/v1/players/get' 
+    PATH = './dags/ProjektDataService/data'
 
-    return pull_data('PlayerProdex', ts, params)
-
-@dag( 
+@dag(
     dag_id='online_players',
-    schedule=timedelta(minutes=5),
-    start_date=pendulum.datetime(2023, 6, 1, 0, 0, 0, tz="Europe/Copenhagen"),
-    catchup=True,
+    schedule=timedelta(minutes=2),
+    start_date=pendulum.now("Europe/Copenhagen").subtract(days=1),
+    catchup=False,
     max_active_tasks=5,
     max_active_runs=5,
     tags=['experimental', 'samp', 'rest api'],
     default_args=default_task_args,)
 def online_players():
-    print("##-- Calling API")
     if __name__ != "__main__":
+        print("##-- Calling API")
+        setups()
         eProdex_jsons = extract_PlayerProdex()
         write_to_bucket(eProdex_jsons, 'live')
 
-def pull_data(data_name: str, data_timedate: datetime, params: dict) -> List[str]:
-    page_index = 0
-    fNames = []
-    
-    while True:
-        if not 'limit' in params.keys():
-            params['limit'] = page_size
-        params['offset'] = page_index * page_size
-        
-        r = requests.get(URL, params=params)
+@task
+def extract_PlayerProdex(**kwargs):
+    global URL, PATH
+    ts = datetime.fromisoformat(kwargs['ts'])
 
-        if r.status_code != requests.codes.ok:
-            raise Exception('http not 200 ok', r.text)
-        else:
-            rjson = r.json()
-        
-        if len(rjson) > 0:
-            page_index += 1
-            time_stamp = data_timedate.isoformat(timespec='seconds').replace(':', '.')
-            fName = f'{data_dir}/{data_name}_{time_stamp}_#{page_index}.json'
-            with open(fName, "w+") as f:
-                f.write(r.text)
-            fNames.append(fName)
-        else:
-            break
-        time.sleep(1)
-    return fNames
+    return pull_data('PlayerProdex', ts)
 
 @task
-def write_to_bucket(eProdex_jsons, table_path):
-    MINIO_BUCKET_NAME = 'prodex-data'
+def write_to_bucket(eProdex_json, table_path):
+    #MINIO_BUCKET_NAME = os.getenv('MINIO_BUCKET_NAME')
+    bucket = 'prodex'
     MINIO_ACCESS_KEY = os.getenv('MINIO_ROOT_USER')
     MINIO_SECRET_KEY = os.getenv('MINIO_ROOT_PASSWORD')
     client = Minio("minio:9000", access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY, secure=False)
-    found = client.bucket_exists(MINIO_BUCKET_NAME)
+    found = client.bucket_exists(bucket)
 
     if not found:
-        client.make_bucket(MINIO_BUCKET_NAME)
+        client.make_bucket(bucket)
     
-    for prodex_json_filepath in eProdex_jsons:
-        with open(prodex_json_filepath, 'r') as jf:
-            prodex_json = json.load(jf)
-        df = pd.DataFrame(prodex_json['records'])
-        file_data = df.to_parquet(index=False)
-        prodex_filename = prodex_json_filepath.split('/')[-1]
-        filename = (
-            f"{table_path}/{prodex_filename}.parquet"
-        )
-        client.put_object(
-            MINIO_BUCKET_NAME, filename, data=BytesIO(file_data), length=len(file_data), content_type="application/csv"
-        )
-        #os.remove(prodex_json_filepath)
-##-- Opg 1
+    with open(eProdex_json, 'r') as jf:
+        prodex_json = json.load(jf)
 
-url = "https://sa-mp.im/api/v1/players/get"
-resp = requests.get(url)
-print(f"Count: {len(resp.json())} ->\n{json.dumps(resp.json(), indent=4)}")
+    df = pd.DataFrame(prodex_json)
+    file_data = df.to_parquet(index=False)
+    prodex_filename = eProdex_json.split('/')[-1]
+    filename = (
+        f"{table_path}/{prodex_filename}.parquet"
+    )
+    client.put_object(
+        bucket, filename, data=BytesIO(file_data), length=len(file_data), content_type="application/csv"
+    )
+    os.remove(eProdex_json)
 
-##-- Opg 2
+def pull_data(data_name: str, data_timedate: datetime) -> str:
+    r = requests.get(URL)
+
+    if r.status_code != requests.codes.ok:
+        raise Exception('http not 200 ok', r.text)
+
+    rjson = r.json()
+
+    for x in rjson:
+        x['ts'] = f"{data_timedate.year}-{data_timedate.month}-{data_timedate.day} {data_timedate.hour}:{data_timedate.minute}:{data_timedate.second}"
+
+    time_stamp = data_timedate.isoformat(timespec='seconds').replace(':', '.')
+    fName = f'{PATH}/{data_name}_{time_stamp}.json'
+
+    with open(fName, "w+") as f:
+        f.write(json.dumps(rjson))
+        
+    return fName
 
 online_players()
