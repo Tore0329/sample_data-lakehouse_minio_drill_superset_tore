@@ -120,20 +120,17 @@ def extract_ElectricityProdex(**kwargs):
     #https://api.energidataservice.dk/dataset/ElectricityProdex5MinRealtime?offset=0&start=2022-12-26T00:00&end=2022-12-27T00:00&sort=Minutes5UTC%20DESC&timezone=dk
 
 @task
-def write_to_bucket(eProdex_jsons):
-    # tweet_list, batchDatetime_str, batchId = data
-    # batchDatetime = datetime.strptime(batchDatetime_str, "%Y-%m-%d %H:%M:%S")
-
-
-
+def write_to_bucket(eProdex_jsons, table_path):
     import pandas as pd
     from minio import Minio
     from io import BytesIO
+    import os
+    import json
 
     # MINIO_BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME")
-    MINIO_BUCKET_NAME = 'prodex'
-    MINIO_ROOT_USER = os.getenv("MINIO_ROOT_USER")
-    MINIO_ROOT_PASSWORD = os.getenv("MINIO_ROOT_PASSWORD")
+    MINIO_BUCKET_NAME = 'prodex-data'
+    # MINIO_ROOT_USER = os.getenv("MINIO_ROOT_USER")
+    # MINIO_ROOT_PASSWORD = os.getenv("MINIO_ROOT_PASSWORD")
 
     # MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
     # MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
@@ -152,21 +149,28 @@ def write_to_bucket(eProdex_jsons):
     else:
         print(f"Bucket '{MINIO_BUCKET_NAME}' already exists!")
 
-    for prodex_json in eProdex_jsons:
+    for prodex_json_filepath in eProdex_jsons:
         
         # df = pd.DataFrame(tweet_list)
         # file_data = df.to_parquet(index=False)
-        df = pd.read_json(prodex_json)
+        with open(prodex_json_filepath, 'r') as jf:
+            prodex_json = json.load(jf)
+        # rec_list = prodex_json['records']
+        # df = pd.read_json(prodex_json_filepath)
+        df = pd.DataFrame(prodex_json['records'])
+        print(df)
         file_data = df.to_parquet(index=False)
 
+        prodex_filename = prodex_json_filepath.split('/')[-1]
         # Put parquet data in the bucket
         filename = (
             # f"tweets/{batchDatetime.strftime('%Y/%m/%d')}/elon_tweets_{batchDatetime.strftime('%H%M%S')}_{batchId}.parquet"
-            f"predex/{prodex_json}.parquet"
+            f"{table_path}/{prodex_filename}.parquet"
         )
         client.put_object(
             MINIO_BUCKET_NAME, filename, data=BytesIO(file_data), length=len(file_data), content_type="application/csv"
         )
+        os.remove(prodex_json_filepath)
 
 
 @dag( 
@@ -185,7 +189,7 @@ def electrical_power_gross():
         eProdex_jsons = extract_ElectricityProdex()
     else: # more or less test mode
         eProdex_jsons = extract_ElectricityProdex(ts=datetime.now().isoformat())
-    write_to_bucket(eProdex_jsons)
+    write_to_bucket(eProdex_jsons, 'live')
 
 @task
 def extract_ElectricityProdex_back(**kwargs):
@@ -242,8 +246,11 @@ def electrical_power_gross_back():
             'data_interval_start' : datetime.fromisoformat("2020-12-31T23:00:00+00:00"),
         }
         eProdex_jsons = extract_ElectricityProdex_back(**args)
+#<<<<<<< HEAD
     write_to_bucket(eProdex_jsons)
-
+#=======
+    #write_to_bucket(eProdex_jsons, 'back')
+#>>>>>>> 44a5ae37c257bcc7c771c7f77efb678e2260008d
 
 
 electrical_power_gross()
