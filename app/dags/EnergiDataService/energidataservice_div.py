@@ -179,7 +179,7 @@ def write_to_bucket(eProdex_jsons):
     tags=['experimental', 'energy', 'rest api'],
     default_args=default_task_args,)
 def electrical_power_gross():
-    print("Doing energy_data")
+    print("##-- Doing energy data")
     setups()
     if __name__ != "__main__": # as in "normal" operation as DAG stated in Airflow
         eProdex_jsons = extract_ElectricityProdex()
@@ -231,7 +231,7 @@ def extract_ElectricityProdex_back(**kwargs):
     tags=['experimental', 'energy', 'rest api'],
     default_args=default_task_args,)
 def electrical_power_gross_back():
-    print("Doing energy_data")
+    print("##-- Doing monthly energy data")
     setups()
     if __name__ != "__main__": # as in "normal" operation as DAG stated in Airflow
         eProdex_jsons = extract_ElectricityProdex_back()
@@ -242,6 +242,7 @@ def electrical_power_gross_back():
             'data_interval_start' : datetime.fromisoformat("2020-12-31T23:00:00+00:00"),
         }
         eProdex_jsons = extract_ElectricityProdex_back(**args)
+    write_to_bucket(eProdex_jsons)
 
 
 
